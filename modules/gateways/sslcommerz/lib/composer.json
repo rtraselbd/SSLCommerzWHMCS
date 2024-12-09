@@ -1,0 +1,5 @@
+{
+    "require": {
+        "revoltify/sslcommerz-php-library": "^2.0"
+    }
+}

@@ -1,0 +1,29 @@
+{
+	"schema": "1.0",
+	"type": "whmcs-gateways",
+	"name": "sslcommerz",
+	"license": "MIT",
+	"category": "payments",
+	"description": {
+		"name": "SSLCommerz Payment Gateway",
+		"tagline": "One Gateway for all your payment needs",
+		"long": "SSLCOMMERZ is an end-to-end payment solution for your business with extensive coverage, seamless integration, and support for multiple channels.",
+		"features": [
+			"Checkout with SSLCommerz for a faster checkout & payment experience",
+			"Additional fees",
+			"WHMCS 8 Support"
+		]
+	},
+	"logo": {
+		"filename": "logo.png"
+	},
+	"support": {
+		"homepage": "https:\/\/www.sslcommerz.com\/"
+	},
+	"authors": [
+		{
+			"name": "Rasel Islam Rafi",
+			"homepage": "https:\/\/github.com\/rtraselbd\/"
+		}
+	]
+}
