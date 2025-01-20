@@ -6,9 +6,9 @@ The SSLCommerz module allows you to effortlessly integrate payment solutions wit
 
 To install the SSLCommerz module, follow these steps:
 
-1. Download [SSLCommerz.zip](https://github.com/rtraselbd/SSLCommerzWHMCS/releases/download/1.0.0/SSLCommerz.zip) file from the **Release** section of this repository.
+1. Download [SSLCommerz.zip](https://github.com/rtraselbd/SSLCommerzWHMCS/releases/download/1.0.1/SSLCommerz.zip) file from the **Release** section of this repository.
 
-2. Upload the `SSLCommerz.zip` file to your WHMCS installation.
+2. Upload the `SSLCommerz.zip` file to your WHMCS installation directory.
 
 3. Extract the contents of the ZIP file within your WHMCS installation directory.
 
