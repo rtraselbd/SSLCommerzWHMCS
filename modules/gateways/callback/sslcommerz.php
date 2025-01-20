@@ -61,13 +61,13 @@ class SSLCommerzCheckout
     private function setGateway()
     {
         $this->gatewayModuleName = basename(__FILE__, '.php');
-        $this->gatewayParams = getGatewayVariables($this->gatewayModuleName);
-        $this->isActive = !empty($this->gatewayParams['type']);
+        $this->gatewayParams     = getGatewayVariables($this->gatewayModuleName);
+        $this->isActive          = ! empty($this->gatewayParams['type']);
 
         $this->credential = [
-            'store_id' => $this->gatewayParams['store_id'],
+            'store_id'       => $this->gatewayParams['store_id'],
             'store_password' => $this->gatewayParams['store_password'],
-            'sandbox' => !empty($this->gatewayParams['sandbox']),
+            'sandbox'        => ! empty($this->gatewayParams['sandbox']),
         ];
 
         $this->sslcommerz = new SSLCommerzAPI($this->credential);
@@ -99,15 +99,27 @@ class SSLCommerzCheckout
 
     private function setCurrency()
     {
+        // Gateway currency (BDT)
         $this->gatewayCurrency = (int) $this->gatewayParams['convertto'];
+
+        // Customer currency (USD)
         $this->customerCurrency = (int) \WHMCS\Database\Capsule::table('tblclients')
             ->where('id', '=', $this->invoice['userid'])
             ->value('currency');
 
-        if (!empty($this->gatewayCurrency) && ($this->customerCurrency !== $this->gatewayCurrency)) {
-            $this->convoRate = \WHMCS\Database\Capsule::table('tblcurrencies')
+        if (! empty($this->gatewayCurrency) && ($this->customerCurrency !== $this->gatewayCurrency)) {
+            // Get base currency rate (BDT rate)
+            $baseCurrencyRate = \WHMCS\Database\Capsule::table('tblcurrencies')
                 ->where('id', '=', $this->gatewayCurrency)
                 ->value('rate');
+
+            // Get customer currency rate (USD rate)
+            $customerCurrencyRate = \WHMCS\Database\Capsule::table('tblcurrencies')
+                ->where('id', '=', $this->customerCurrency)
+                ->value('rate');
+
+            // Calculate conversion rate (BDT to USD)
+            $this->convoRate = $baseCurrencyRate / $customerCurrencyRate;
         } else {
             $this->convoRate = 1;
         }
@@ -139,7 +151,7 @@ class SSLCommerzCheckout
             $this->gatewayParams['name'],
             [
                 $this->gatewayModuleName => $payload,
-                'request_data' => $this->request->request->all(),
+                'request_data'           => $this->request->request->all(),
             ],
             $payload['status']
         );
@@ -149,11 +161,11 @@ class SSLCommerzCheckout
     {
         $fields = [
             'invoiceid' => $this->invoice['invoiceid'],
-            'transid' => $trxId,
-            'gateway' => $this->gatewayModuleName,
-            'date' => \Carbon\Carbon::now()->toDateTimeString(),
-            'amount' => $this->due,
-            'fees' => $this->fee,
+            'transid'   => $trxId,
+            'gateway'   => $this->gatewayModuleName,
+            'date'      => \Carbon\Carbon::now()->toDateTimeString(),
+            'amount'    => $this->due,
+            'fees'      => $this->fee,
         ];
         $add = localAPI('AddInvoicePayment', $fields);
 
@@ -162,19 +174,19 @@ class SSLCommerzCheckout
 
     public function createPayment()
     {
-        $systemUrl = \WHMCS\Config\Setting::getValue('SystemURL');
+        $systemUrl   = \WHMCS\Config\Setting::getValue('SystemURL');
         $callbackURL = $systemUrl . '/modules/gateways/callback/' . $this->gatewayModuleName . '.php?id=' . $this->invoice['invoiceid'];
 
         $fields = [
-            'amount' => $this->total,
-            'invoice_id' => $this->invoice['invoiceid'],
+            'amount'       => $this->total,
+            'invoice_id'   => $this->invoice['invoiceid'],
             'callback_url' => $callbackURL,
-            'name' => $this->client['fullname'],
-            'email' => $this->client['email'],
-            'phone' => '0' . $this->client['phonenumber'],
-            'address' => $this->client['address1'],
-            'city' => $this->client['city'],
-            'country' => $this->client['countryname'],
+            'name'         => $this->client['fullname'],
+            'email'        => $this->client['email'],
+            'phone'        => '0' . $this->client['phonenumber'],
+            'address'      => $this->client['address1'],
+            'city'         => $this->client['city'],
+            'country'      => $this->client['countryname'],
         ];
 
         return $this->sslcommerz->checkout($fields);
@@ -190,16 +202,16 @@ class SSLCommerzCheckout
 
                 if ($existing['totalresults'] > 0) {
                     return [
-                        'status' => 'error',
-                        'message' => 'The transaction has been already used.',
+                        'status'    => 'error',
+                        'message'   => 'The transaction has been already used.',
                         'errorCode' => 'tau',
                     ];
                 }
 
                 if ($response->amount() < $this->total) {
                     return [
-                        'status' => 'error',
-                        'message' => 'You\'ve paid less than amount is required.',
+                        'status'    => 'error',
+                        'message'   => 'You\'ve paid less than amount is required.',
                         'errorCode' => 'lpa',
                     ];
                 }
@@ -210,20 +222,20 @@ class SSLCommerzCheckout
 
                 if ($trxAddResult['result'] === 'success') {
                     return [
-                        'status' => 'success',
+                        'status'  => 'success',
                         'message' => 'The payment has been successfully verified.',
                     ];
                 }
             }
 
             return [
-                'status' => 'error',
+                'status'    => 'error',
                 'errorCode' => 'failure',
             ];
         } catch (\Exception $e) {
             return [
-                'status' => 'error',
-                'message' => $e->getMessage(),
+                'status'    => 'error',
+                'message'   => $e->getMessage(),
                 'errorCode' => 'sww',
             ];
         }
@@ -232,12 +244,12 @@ class SSLCommerzCheckout
 
 $sslCommerzCheckout = SSLCommerzCheckout::init();
 
-if (!$sslCommerzCheckout->isActive) {
+if (! $sslCommerzCheckout->isActive) {
     die("The gateway is unavailable.");
 }
 
 $action = $sslCommerzCheckout->request->get('action');
-$invid = $sslCommerzCheckout->request->get('id');
+$invid  = $sslCommerzCheckout->request->get('id');
 
 if ($action === 'init') {
     try {
