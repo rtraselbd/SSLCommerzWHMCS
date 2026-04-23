@@ -255,7 +255,14 @@ if ($action === 'init') {
     try {
         $response = $sslCommerzCheckout->createPayment();
         if ($response->success()) {
-            header('Location: ' . $response->gatewayPageURL());
+            // Force the redesigned EasyCheckout UI by swapping the gateway host.
+            $gatewayUrl = $response->gatewayPageURL();
+            $newUiUrl = preg_replace(
+                '#^https?://(?:epay-gw|securepay)\.sslcommerz\.com/#',
+                'https://pay.sslcommerz.com/',
+                $gatewayUrl
+            );
+            header('Location: ' . $newUiUrl);
             exit;
         } else {
             redirSystemURL("id=$invid&paymentfailed=true&errorCode={$response->failedReason()}", "viewinvoice.php");
