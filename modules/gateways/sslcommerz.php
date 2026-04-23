@@ -47,6 +47,12 @@ function sslcommerz_config()
             'Type' => 'yesno',
             'Description' => 'Tick to enable sandbox mode',
         ],
+        'force_new_ui' => [
+            'FriendlyName' => 'Force New Checkout UI',
+            'Type' => 'yesno',
+            'Default' => 'on',
+            'Description' => 'Tick to force the redesigned EasyCheckout UI. Leave unticked to use legacy checkout UI.',
+        ],
     ];
 }
 

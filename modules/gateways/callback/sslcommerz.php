@@ -13,7 +13,7 @@ class SSLCommerzCheckout
 
     protected $gatewayModuleName;
 
-    protected $gatewayParams;
+    public $gatewayParams;
 
     public $isActive;
 
@@ -255,14 +255,20 @@ if ($action === 'init') {
     try {
         $response = $sslCommerzCheckout->createPayment();
         if ($response->success()) {
-            // Force the redesigned EasyCheckout UI by swapping the gateway host.
             $gatewayUrl = $response->gatewayPageURL();
-            $newUiUrl = preg_replace(
-                '#^https?://(?:epay-gw|securepay)\.sslcommerz\.com/#',
-                'https://pay.sslcommerz.com/',
-                $gatewayUrl
-            );
-            header('Location: ' . $newUiUrl);
+
+            if (!empty($sslCommerzCheckout->gatewayParams['force_new_ui'])) {
+                $newHost    = !empty($sslCommerzCheckout->gatewayParams['sandbox'])
+                    ? 'https://sandbox.sslcommerz.com/'
+                    : 'https://pay.sslcommerz.com/';
+                $gatewayUrl = preg_replace(
+                    '#^https?://(?:epay-gw|securepay|sandbox|pay)\.sslcommerz\.com/#',
+                    $newHost,
+                    $gatewayUrl
+                );
+            }
+
+            header('Location: ' . $gatewayUrl);
             exit;
         } else {
             redirSystemURL("id=$invid&paymentfailed=true&errorCode={$response->failedReason()}", "viewinvoice.php");
