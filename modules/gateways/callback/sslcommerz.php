@@ -8,7 +8,6 @@ use WHMCS\Module\Gateway\Sslcommerz\SSLCommerzAPI;
 
 class SSLCommerzCheckout
 {
-
     private static $instance;
 
     protected $gatewayModuleName;
@@ -257,15 +256,19 @@ if ($action === 'init') {
         if ($response->success()) {
             $gatewayUrl = $response->gatewayPageURL();
 
-            if (!empty($sslCommerzCheckout->gatewayParams['force_new_ui'])) {
-                $newHost    = !empty($sslCommerzCheckout->gatewayParams['sandbox'])
-                    ? 'https://sandbox.sslcommerz.com/'
-                    : 'https://pay.sslcommerz.com/';
-                $gatewayUrl = preg_replace(
-                    '#^https?://(?:epay-gw|securepay|sandbox|pay)\.sslcommerz\.com/#',
-                    $newHost,
+            $forceNewUi = !empty($sslCommerzCheckout->gatewayParams['force_new_ui']);
+            $isSandbox  = !empty($sslCommerzCheckout->gatewayParams['sandbox']);
+
+            if ($forceNewUi && !$isSandbox) {
+                $rewritten = preg_replace(
+                    '#^https?://(?!pay\.sslcommerz\.com/)[a-z0-9-]+\.sslcommerz\.com/#i',
+                    'https://pay.sslcommerz.com/',
                     $gatewayUrl
                 );
+
+                if ($rewritten !== null) {
+                    $gatewayUrl = $rewritten;
+                }
             }
 
             header('Location: ' . $gatewayUrl);
