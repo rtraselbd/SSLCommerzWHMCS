@@ -54,6 +54,17 @@ Both are kept in the `mod_sslcommerz_transactions` table, which the module creat
 
 To record the `bank_tran_id` in WHMCS instead, change **Recorded Transaction ID** in the gateway configuration. Refunds work with either setting.
 
+## Refunds
+
+Refunds are issued from the WHMCS invoice as usual. Two things happen behind that:
+
+- The SSLCommerz refund API accepts only the `bank_tran_id`, so it is resolved from whichever ID WHMCS recorded.
+- Payments are always taken in BDT, converted from the invoice currency at checkout, while WHMCS asks for a refund in the invoice's own currency. For a non-BDT invoice the amount is converted back at the rate that payment was originally taken at, and never exceeds what was captured.
+
+The gateway log records the amount sent alongside the amount WHMCS requested, so any refund can be checked after the fact.
+
+Payments taken before this module version have no recorded rate to convert with, so a refund of one is sent in the invoice currency exactly as before. On a non-BDT invoice, refund those from the SSLCommerz merchant panel instead.
+
 ## Gateway Activation
 
 To activate the SSLCommerz gateway, follow these steps:
