@@ -80,8 +80,10 @@ class SSLCommerzCheckout
 
     private function setInvoice()
     {
+        // An IPN URL configured in the merchant panel carries no query string,
+        // so fall back to the invoice id echoed back in value_a.
         $this->invoice = localAPI('GetInvoice', [
-            'invoiceid' => $this->request->get('id'),
+            'invoiceid' => $this->request->get('id') ?: $this->request->get('value_a'),
         ]);
 
         $this->setCurrency();
@@ -143,6 +145,21 @@ class SSLCommerzCheckout
     private function checkTransaction($trxId)
     {
         return localAPI('GetTransactions', ['transid' => $trxId]);
+    }
+
+    private function belongsToInvoice($transactions)
+    {
+        $found = isset($transactions['transactions']['transaction'])
+            ? $transactions['transactions']['transaction']
+            : [];
+
+        foreach ($found as $transaction) {
+            if ((int) $transaction['invoiceid'] === (int) $this->invoice['invoiceid']) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function logTransaction($payload)
@@ -233,6 +250,37 @@ class SSLCommerzCheckout
         return $this->sslcommerz->checkout($fields);
     }
 
+    /**
+     * Server to server notification from SSLCommerz. It arrives whether or not
+     * the customer ever returns to the site, so it is the path that settles a
+     * payment when the browser never makes it back.
+     */
+    public function handleIpn()
+    {
+        $payload = $this->request->request->all();
+        $status  = strtoupper((string) $this->request->get('status'));
+
+        // The validation API is the real authority, this only turns away noise.
+        if ($this->sslcommerz->signatureMatches($payload) === false) {
+            return [
+                'status'    => 'error',
+                'message'   => 'Signature verification failed.',
+                'errorCode' => 'sig',
+            ];
+        }
+
+        if ($status !== 'VALID' && $status !== 'VALIDATED') {
+            Storage::save($this->request->get('tran_id'), ['status' => strtolower($status)]);
+
+            return [
+                'status'  => 'ignored',
+                'message' => 'Nothing to record for status: ' . $status,
+            ];
+        }
+
+        return $this->makeTransaction();
+    }
+
     public function makeTransaction()
     {
         try {
@@ -253,6 +301,15 @@ class SSLCommerzCheckout
                     $existing = $this->checkTransaction($trxId);
 
                     if ($existing['totalresults'] > 0) {
+                        // The IPN and the customer's return both land here, so a
+                        // payment already on this invoice is not a reused one.
+                        if ($this->belongsToInvoice($existing)) {
+                            return [
+                                'status'  => 'success',
+                                'message' => 'The payment has been already recorded.',
+                            ];
+                        }
+
                         return [
                             'status'    => 'error',
                             'message'   => 'The transaction has been already used.',
@@ -269,6 +326,13 @@ class SSLCommerzCheckout
                     ];
                 }
 
+                if (! Storage::claim($response->tranId())) {
+                    return [
+                        'status'  => 'success',
+                        'message' => 'The payment is already being recorded.',
+                    ];
+                }
+
                 $this->logTransaction($response->toArray());
 
                 $trxAddResult = $this->addTransaction($this->resolveTrxId($response));
@@ -279,6 +343,9 @@ class SSLCommerzCheckout
                         'message' => 'The payment has been successfully verified.',
                     ];
                 }
+
+                // Let a later attempt, or the IPN, record it instead.
+                Storage::release($response->tranId());
             }
 
             return [
@@ -335,6 +402,20 @@ if ($action === 'init') {
         redirSystemURL("id=$invid&paymentfailed=true&errorCode=sww", "viewinvoice.php");
         exit;
     }
+}
+
+if ($action === 'ipn') {
+    $response = $sslCommerzCheckout->handleIpn();
+
+    // SSLCommerz reads the body, not a redirect. Only an unexpected failure
+    // gets a 5xx, so that it is the one case SSLCommerz retries.
+    if (isset($response['errorCode']) && $response['errorCode'] === 'sww') {
+        http_response_code(500);
+    }
+
+    header('Content-Type: text/plain');
+    echo isset($response['message']) ? $response['message'] : $response['status'];
+    exit;
 }
 
 if ($action === 'verify') {

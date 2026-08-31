@@ -81,6 +81,73 @@ class Storage
     }
 
     /**
+     * Claim the right to record a payment against an invoice.
+     *
+     * The IPN notification and the customer's own return can arrive at the same
+     * moment, so the claim is a single conditional statement, which the database
+     * settles atomically. Only the caller it returns true for may post the
+     * payment; the loser leaves it to the winner.
+     */
+    public static function claim($tranId)
+    {
+        $tranId = (string) $tranId;
+        $now    = date('Y-m-d H:i:s');
+
+        if ($tranId === '') {
+            return true;
+        }
+
+        try {
+            $claimed = static::query()
+                ->where('tran_id', '=', $tranId)
+                ->whereNull('recorded_at')
+                ->update(['recorded_at' => $now, 'updated_at' => $now]);
+
+            if ($claimed) {
+                return true;
+            }
+
+            if (static::query()->where('tran_id', '=', $tranId)->exists()) {
+                return false; // Already claimed by whoever got here first.
+            }
+
+            // Payments started before this ledger existed have no row to claim,
+            // so the insert itself becomes the claim: the unique tran_id index
+            // rejects everyone but the first.
+            static::query()->insert([
+                'tran_id'     => $tranId,
+                'recorded_at' => $now,
+                'created_at'  => $now,
+                'updated_at'  => $now,
+            ]);
+
+            return true;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Give up a claim, so a later attempt can still record the payment.
+     */
+    public static function release($tranId)
+    {
+        $tranId = (string) $tranId;
+
+        if ($tranId === '') {
+            return;
+        }
+
+        try {
+            static::query()
+                ->where('tran_id', '=', $tranId)
+                ->update(['recorded_at' => null, 'updated_at' => date('Y-m-d H:i:s')]);
+        } catch (Exception $e) {
+            // See begin().
+        }
+    }
+
+    /**
      * Find a payment by either of the two identifiers SSLCommerz issues.
      */
     public static function find($transId)
@@ -115,6 +182,8 @@ class Storage
         $checked = true;
 
         if (Capsule::schema()->hasTable(static::TABLE)) {
+            static::ensureColumns();
+
             return;
         }
 
@@ -130,11 +199,30 @@ class Storage
                 $table->string('currency', 8)->nullable();
                 $table->string('status', 32)->nullable();
                 $table->string('refund_ref_id', 100)->nullable();
+                $table->timestamp('recorded_at')->nullable();
                 $table->timestamp('created_at')->nullable();
                 $table->timestamp('updated_at')->nullable();
             });
         } catch (Exception $e) {
             // A concurrent request may have created it first.
+        }
+    }
+
+    /**
+     * Bring a table created by an earlier version of the module up to date.
+     */
+    protected static function ensureColumns()
+    {
+        try {
+            if (Capsule::schema()->hasColumn(static::TABLE, 'recorded_at')) {
+                return;
+            }
+
+            Capsule::schema()->table(static::TABLE, function ($table) {
+                $table->timestamp('recorded_at')->nullable();
+            });
+        } catch (Exception $e) {
+            // See ensureTable().
         }
     }
 }

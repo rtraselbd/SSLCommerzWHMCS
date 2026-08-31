@@ -7,7 +7,6 @@ require_once __DIR__ . '/vendor/autoload.php';
 use Exception;
 use GuzzleHttp\Client;
 use SSLCommerz\Exception\SSLCommerzException;
-use SSLCommerz\PaymentParams;
 use SSLCommerz\SSLCommerz;
 
 class SSLCommerzAPI
@@ -25,13 +24,14 @@ class SSLCommerzAPI
     public function checkout($fields)
     {
         try {
-            $params = (new PaymentParams())
+            $params = (new CheckoutParams())
                 ->setAmount($fields['amount']) // Amount in BDT
                 ->setCurrency('BDT')
                 ->setTransactionId($fields['tran_id']) // Unique transaction ID
                 ->setSuccessUrl($fields['callback_url'] . '&action=verify')
                 ->setFailUrl($fields['callback_url'] . '&action=fail')
                 ->setCancelUrl($fields['callback_url'] . '&action=cancel')
+                ->setIpnUrl($fields['callback_url'] . '&action=ipn')
                 ->setCustomerInfo($fields['name'], $fields['email'], $fields['phone'], $fields['address'], $fields['city'], $fields['country'])
                 ->setProductInfo('Domain & Hosting', 'Domain-Hosting', 'general')
                 ->setCustomValues($fields['invoice_id']);
@@ -58,6 +58,41 @@ class SSLCommerzAPI
         } catch (SSLCommerzException $e) {
             throw new Exception($e->getMessage());
         }
+    }
+
+    /**
+     * Check the signature SSLCommerz sends with an IPN notification.
+     *
+     * Returns null when the notification carries nothing to check against, in
+     * which case the caller still has the validation API as the authority.
+     *
+     * @see https://github.com/sslcommerz/SSLCommerz-PHP lib/SslCommerzNotification.php
+     */
+    public function signatureMatches(array $payload)
+    {
+        if (empty($payload['verify_sign']) || empty($payload['verify_key'])) {
+            return null;
+        }
+
+        $fields = [];
+
+        foreach (explode(',', $payload['verify_key']) as $field) {
+            if (isset($payload[$field])) {
+                $fields[$field] = $payload[$field];
+            }
+        }
+
+        $fields['store_passwd'] = md5($this->credential['store_password']);
+
+        ksort($fields);
+
+        $hash = '';
+
+        foreach ($fields as $field => $value) {
+            $hash .= $field . '=' . $value . '&';
+        }
+
+        return md5(rtrim($hash, '&')) === $payload['verify_sign'];
     }
 
     /**

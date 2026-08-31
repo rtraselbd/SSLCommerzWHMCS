@@ -26,6 +26,23 @@ To ensure smooth operation, perform the following configuration steps:
 
 3. Save your changes.
 
+## IPN (Instant Payment Notification)
+
+A payment is normally recorded when the customer is redirected back to your site. If they close the tab or lose their connection on the way back, that redirect never happens — IPN is the server-to-server notification that settles the payment anyway.
+
+The module sends an `ipn_url` with every payment session automatically, so nothing needs to be built. IPN does have to be enabled for your store in the SSLCommerz Merchant Panel:
+
+1. Log in to the SSLCommerz Merchant Panel.
+2. Under the IPN settings, enable IPN and set the listener URL to:
+
+   ```
+   https://your-whmcs-domain/modules/gateways/callback/sslcommerz.php?action=ipn
+   ```
+
+   The `?action=ipn` part is required. The invoice is resolved from the `value_a` field the gateway echoes back, so no invoice ID is needed in this URL.
+
+Notifications are rejected when their `verify_sign` does not match your store password, and every one that passes is still validated against the SSLCommerz order validation API before any payment is recorded. The notification and the customer's own return can arrive together — only one of them can post the payment, so the invoice is never paid twice.
+
 ## Transaction IDs
 
 SSLCommerz issues two identifiers for every payment:
