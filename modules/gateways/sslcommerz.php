@@ -1,6 +1,7 @@
 <?php
 
 use WHMCS\Module\Gateway\Sslcommerz\SSLCommerzAPI;
+use WHMCS\Module\Gateway\Sslcommerz\Storage;
 
 if (!defined("WHMCS")) {
     die("This file cannot be accessed directly");
@@ -41,6 +42,13 @@ function sslcommerz_config()
             'Size' => '25',
             'Default' => 1.85,
             'Description' => 'Gateway fee if you want to add',
+        ],
+        'transid_source' => [
+            'FriendlyName' => 'Recorded Transaction ID',
+            'Type' => 'dropdown',
+            'Options' => 'tran_id,bank_tran_id',
+            'Default' => 'tran_id',
+            'Description' => 'Which SSLCommerz ID is stored as the WHMCS transaction ID. Refunds work either way, both IDs are kept in the mod_sslcommerz_transactions table.',
         ],
         'sandbox' => [
             'FriendlyName' => 'Sandbox',
@@ -86,8 +94,15 @@ function sslcommerz_refund($params)
 {
     $sslcommerz = new SSLCommerzAPI(['store_id' => $params['store_id'], 'store_password' => $params['store_password'], 'sandbox' => !empty($params['sandbox'])]);
 
+    $record = Storage::find((string) $params['transid']);
+
+    $amount = sslcommerz_refundAmount($params, $record);
+
     try {
-        $response = $sslcommerz->refund($params['transid'], $params['amount']);
+        // The refund API only accepts the bank transaction ID, whatever WHMCS holds.
+        $bankTrxId = sslcommerz_bankTrxId($sslcommerz, $record, (string) $params['transid']);
+
+        $response = $sslcommerz->refund($bankTrxId, $amount);
     } catch (\Exception $e) {
         return [
             'status' => 'error',
@@ -95,12 +110,104 @@ function sslcommerz_refund($params)
         ];
     }
 
+    // What was asked for is logged next to what came back, so the amount that
+    // actually reached the gateway is never a matter of guesswork.
+    $rawdata = [
+        'request' => [
+            'bank_tran_id' => $bankTrxId,
+            'refund_amount' => $amount,
+            'refund_currency' => 'BDT',
+            'requested_amount' => $params['amount'],
+            'requested_currency' => isset($params['currency']) ? $params['currency'] : null,
+        ],
+        'response' => $response->toArray(),
+    ];
+
+    if (!$response->success() && !$response->processing()) {
+        return [
+            'status' => 'declined',
+            'rawdata' => $rawdata,
+        ];
+    }
+
+    // Resolving the bank ID may have created the row this started without.
+    $record = $record ?: Storage::find((string) $params['transid']);
+
+    if ($record) {
+        Storage::save($record->tran_id, [
+            'status' => 'refund_' . $response->status(),
+            'refund_ref_id' => $response->refundRefId(),
+        ]);
+    }
+
     return [
         'status' => 'success',
-        'rawdata' => $response->toArray(),
+        'rawdata' => $rawdata,
         'transid' => $response->refundRefId(),
         'fees' => 0,
     ];
+}
+
+/**
+ * The amount to send to the refund API.
+ *
+ * Payments are always taken in BDT, converted from the invoice currency at
+ * checkout, while WHMCS asks for a refund in the invoice's own currency. For a
+ * BDT invoice the two are the same; for any other currency the request has to
+ * be converted back, or a refund returns a small fraction of what was taken.
+ *
+ * The rate used is the one this very payment was taken at, recorded in the
+ * ledger, rather than today's published rate, which has since moved.
+ */
+function sslcommerz_refundAmount($params, $record)
+{
+    $amount = (float) $params['amount'];
+    $currency = isset($params['currency']) ? strtoupper((string) $params['currency']) : '';
+
+    // Billed in BDT, or a currency we were not told: leave the request alone.
+    if ($currency === '' || $currency === 'BDT') {
+        return $amount;
+    }
+
+    $paid = isset($record->amount) ? (float) $record->amount : 0.0;
+    $invoiced = isset($record->invoice_amount) ? (float) $record->invoice_amount : 0.0;
+
+    // Nothing recorded to convert with, as for a payment taken before the
+    // ledger kept both figures.
+    if ($paid <= 0 || $invoiced <= 0) {
+        return $amount;
+    }
+
+    // Whatever the arithmetic says, never ask for more than was captured.
+    return min(round($amount * ($paid / $invoiced), 2), $paid);
+}
+
+/**
+ * Resolve the bank transaction ID a refund needs from whichever ID WHMCS has
+ * recorded against the payment.
+ */
+function sslcommerz_bankTrxId(SSLCommerzAPI $sslcommerz, $record, $transId)
+{
+    if (!empty($record->bank_tran_id)) {
+        return $record->bank_tran_id;
+    }
+
+    $tranId = !empty($record->tran_id) ? $record->tran_id : $transId;
+
+    try {
+        $bankTrxId = $sslcommerz->bankTrxId($tranId);
+    } catch (\Exception $e) {
+        $bankTrxId = null;
+    }
+
+    // Payments taken before the ledger existed already store the bank ID.
+    if (empty($bankTrxId)) {
+        return $transId;
+    }
+
+    Storage::save($tranId, ['bank_tran_id' => $bankTrxId]);
+
+    return $bankTrxId;
 }
 
 function sslcommerz_handleErrors()
@@ -108,6 +215,7 @@ function sslcommerz_handleErrors()
     $errors = [
         'lpa' => 'You paid less amount than required.',
         'tau' => 'The transaction already has been used.',
+        'imm' => 'The transaction belongs to another invoice.',
         'irs' => 'Invalid response from the bKash Server.',
         'ucnl' => 'You didn\'t completed the payment process.',
         'cancel' => 'You payment attempt was cancelled.',
