@@ -2,7 +2,7 @@
 
 namespace WHMCS\Module\Gateway\Sslcommerz;
 
-use Exception;
+use Throwable;
 use WHMCS\Database\Capsule;
 
 /**
@@ -41,7 +41,7 @@ class Storage
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             // The ledger is a convenience, never block a payment over it.
         }
     }
@@ -75,7 +75,7 @@ class Storage
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             // See begin().
         }
     }
@@ -122,7 +122,27 @@ class Storage
             ]);
 
             return true;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
+            // A racing insert trips the unique index and lands here, so the
+            // claim is re-read: another request holding it is the only reason to
+            // stand down. A ledger that is merely unavailable must not swallow
+            // payments, and the duplicate checks still guard the invoice.
+            return ! static::isClaimed($tranId);
+        }
+    }
+
+    /**
+     * Whether a claim is already held. An unreadable ledger answers false, so
+     * the caller records the payment rather than dropping it.
+     */
+    protected static function isClaimed($tranId)
+    {
+        try {
+            return static::query()
+                ->where('tran_id', '=', $tranId)
+                ->whereNotNull('recorded_at')
+                ->exists();
+        } catch (Throwable $e) {
             return false;
         }
     }
@@ -142,7 +162,7 @@ class Storage
             static::query()
                 ->where('tran_id', '=', $tranId)
                 ->update(['recorded_at' => null, 'updated_at' => date('Y-m-d H:i:s')]);
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             // See begin().
         }
     }
@@ -163,7 +183,7 @@ class Storage
                 ->where('tran_id', '=', $transId)
                 ->orWhere('bank_tran_id', '=', $transId)
                 ->first();
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             return null;
         }
     }
@@ -203,7 +223,7 @@ class Storage
                 $table->timestamp('created_at')->nullable();
                 $table->timestamp('updated_at')->nullable();
             });
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             // A concurrent request may have created it first.
         }
     }
@@ -221,7 +241,7 @@ class Storage
             Capsule::schema()->table(static::TABLE, function ($table) {
                 $table->timestamp('recorded_at')->nullable();
             });
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             // See ensureTable().
         }
     }
