@@ -162,6 +162,23 @@ class SSLCommerzCheckout
         return false;
     }
 
+    /**
+     * Record an attempt that is being turned away. Without this the gateway log
+     * holds nothing at all for a notification that never became a payment.
+     */
+    private function logRejection($reason, $payload)
+    {
+        return logTransaction(
+            $this->gatewayParams['name'],
+            [
+                $this->gatewayModuleName => $payload,
+                'reason'                 => $reason,
+                'invoice_id'             => $this->request->get('id') ?: $this->request->get('value_a'),
+            ],
+            $reason
+        );
+    }
+
     private function logTransaction($payload)
     {
         return logTransaction(
@@ -241,10 +258,13 @@ class SSLCommerzCheckout
 
         // Kept even if the customer never returns, so the attempt stays traceable.
         Storage::begin([
-            'invoice_id' => $this->invoice['invoiceid'],
-            'tran_id'    => $trxId,
-            'amount'     => $this->total,
-            'currency'   => 'BDT',
+            'invoice_id'     => $this->invoice['invoiceid'],
+            'tran_id'        => $trxId,
+            'amount'         => $this->total,
+            'currency'       => 'BDT',
+            // The invoice-currency figure behind that BDT total, so the rate this
+            // payment was taken at stays known long after the rates move on.
+            'invoice_amount' => $this->due,
         ]);
 
         return $this->sslcommerz->checkout($fields);
@@ -262,10 +282,24 @@ class SSLCommerzCheckout
 
         // The validation API is the real authority, this only turns away noise.
         if ($this->sslcommerz->signatureMatches($payload) === false) {
+            $this->logRejection('IPN signature verification failed', $payload);
+
             return [
                 'status'    => 'error',
                 'message'   => 'Signature verification failed.',
                 'errorCode' => 'sig',
+            ];
+        }
+
+        // Nothing downstream can attribute the money without an invoice, and a
+        // retry will not change that, so it is recorded and closed off here.
+        if (empty($this->invoice['invoiceid'])) {
+            $this->logRejection('IPN could not be matched to an invoice', $payload);
+
+            return [
+                'status'    => 'error',
+                'message'   => 'No invoice matches this notification.',
+                'errorCode' => 'inv',
             ];
         }
 
@@ -289,7 +323,11 @@ class SSLCommerzCheckout
             if ($response->success()) {
                 $this->recordTransaction($response);
 
-                if (! empty($response->valueA()) && (int) $response->valueA() !== (int) $this->invoice['invoiceid']) {
+                $invoiceId = isset($this->invoice['invoiceid']) ? $this->invoice['invoiceid'] : null;
+
+                if (! empty($response->valueA()) && (int) $response->valueA() !== (int) $invoiceId) {
+                    $this->logRejection('Transaction belongs to invoice ' . $response->valueA(), $response->toArray());
+
                     return [
                         'status'    => 'error',
                         'message'   => 'The transaction belongs to another invoice.',

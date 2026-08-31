@@ -115,6 +115,9 @@ function sslcommerz_refund($params)
         ];
     }
 
+    // Resolving the bank ID may have created the row this started without.
+    $record = $record ?: Storage::find((string) $params['transid']);
+
     if ($record) {
         Storage::save($record->tran_id, [
             'status' => 'refund_' . $response->status(),

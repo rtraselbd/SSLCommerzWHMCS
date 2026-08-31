@@ -216,6 +216,7 @@ class Storage
                 $table->string('bank_tran_id', 100)->nullable()->index();
                 $table->string('card_type', 100)->nullable();
                 $table->decimal('amount', 16, 2)->nullable();
+                $table->decimal('invoice_amount', 16, 2)->nullable();
                 $table->string('currency', 8)->nullable();
                 $table->string('status', 32)->nullable();
                 $table->string('refund_ref_id', 100)->nullable();
@@ -233,16 +234,25 @@ class Storage
      */
     protected static function ensureColumns()
     {
-        try {
-            if (Capsule::schema()->hasColumn(static::TABLE, 'recorded_at')) {
-                return;
-            }
-
-            Capsule::schema()->table(static::TABLE, function ($table) {
+        $columns = [
+            'recorded_at' => function ($table) {
                 $table->timestamp('recorded_at')->nullable();
-            });
-        } catch (Throwable $e) {
-            // See ensureTable().
+            },
+            'invoice_amount' => function ($table) {
+                $table->decimal('invoice_amount', 16, 2)->nullable();
+            },
+        ];
+
+        foreach ($columns as $column => $definition) {
+            try {
+                if (Capsule::schema()->hasColumn(static::TABLE, $column)) {
+                    continue;
+                }
+
+                Capsule::schema()->table(static::TABLE, $definition);
+            } catch (Throwable $e) {
+                // See ensureTable().
+            }
         }
     }
 }
