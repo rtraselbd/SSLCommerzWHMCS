@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Update README version
+        run: |
+          sed -i "s|/releases/download/[^/]*/SSLCommerz.zip|/releases/download/${{ steps.version.outputs.VERSION }}/SSLCommerz.zip|g" README.md
+
+      - name: Commit updated README
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --staged --quiet || git commit -m "chore: update download link to ${{ steps.version.outputs.VERSION }}"
+          git push origin main
+
+      - name: Create release zip
+        run: |
+          zip -r SSLCommerz.zip modules README.md
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: SSLCommerz.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
