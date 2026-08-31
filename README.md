@@ -36,10 +36,10 @@ The module sends an `ipn_url` with every payment session automatically, so nothi
 2. Under the IPN settings, enable IPN and set the listener URL to:
 
    ```
-   https://your-whmcs-domain/modules/gateways/callback/sslcommerz.php?action=ipn
+   https://your-whmcs-domain/modules/gateways/callback/sslcommerz_ipn.php
    ```
 
-   The `?action=ipn` part is required. The invoice is resolved from the `value_a` field the gateway echoes back, so no invoice ID is needed in this URL.
+   The invoice is resolved from the `value_a` field the gateway echoes back, so no invoice ID is needed in this URL. If you would rather point the panel at the main callback, `sslcommerz.php?action=ipn` is equivalent.
 
 Notifications are rejected when their `verify_sign` does not match your store password, and every one that passes is still validated against the SSLCommerz order validation API before any payment is recorded. The notification and the customer's own return can arrive together — only one of them can post the payment, so the invoice is never paid twice.
 
