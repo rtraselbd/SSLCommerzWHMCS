@@ -36,10 +36,10 @@ The module sends an `ipn_url` with every payment session automatically, so nothi
 2. Under the IPN settings, enable IPN and set the listener URL to:
 
    ```
-   https://your-whmcs-domain/modules/gateways/callback/sslcommerz.php?action=ipn
+   https://your-whmcs-domain/modules/gateways/callback/sslcommerz_ipn.php
    ```
 
-   The `?action=ipn` part is required. The invoice is resolved from the `value_a` field the gateway echoes back, so no invoice ID is needed in this URL.
+   The invoice is resolved from the `value_a` field the gateway echoes back, so no invoice ID is needed in this URL. If you would rather point the panel at the main callback, `sslcommerz.php?action=ipn` is equivalent.
 
 Notifications are rejected when their `verify_sign` does not match your store password, and every one that passes is still validated against the SSLCommerz order validation API before any payment is recorded. The notification and the customer's own return can arrive together — only one of them can post the payment, so the invoice is never paid twice.
 
@@ -53,6 +53,17 @@ SSLCommerz issues two identifiers for every payment:
 Both are kept in the `mod_sslcommerz_transactions` table, which the module creates on first use. WHMCS records the `tran_id` in its own transaction ID column by default, and refunds resolve the matching `bank_tran_id` from that table — falling back to a SSLCommerz transaction query when no row exists, so payments taken before this table was introduced can still be refunded.
 
 To record the `bank_tran_id` in WHMCS instead, change **Recorded Transaction ID** in the gateway configuration. Refunds work with either setting.
+
+## Refunds
+
+Refunds are issued from the WHMCS invoice as usual. Two things happen behind that:
+
+- The SSLCommerz refund API accepts only the `bank_tran_id`, so it is resolved from whichever ID WHMCS recorded.
+- Payments are always taken in BDT, converted from the invoice currency at checkout, while WHMCS asks for a refund in the invoice's own currency. For a non-BDT invoice the amount is converted back at the rate that payment was originally taken at, and never exceeds what was captured.
+
+The gateway log records the amount sent alongside the amount WHMCS requested, so any refund can be checked after the fact.
+
+Payments taken before this module version have no recorded rate to convert with, so a refund of one is sent in the invoice currency exactly as before. On a non-BDT invoice, refund those from the SSLCommerz merchant panel instead.
 
 ## Gateway Activation
 
