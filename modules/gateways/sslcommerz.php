@@ -1,6 +1,7 @@
 <?php
 
 use WHMCS\Module\Gateway\Sslcommerz\SSLCommerzAPI;
+use WHMCS\Module\Gateway\Sslcommerz\Storage;
 
 if (!defined("WHMCS")) {
     die("This file cannot be accessed directly");
@@ -41,6 +42,13 @@ function sslcommerz_config()
             'Size' => '25',
             'Default' => 1.85,
             'Description' => 'Gateway fee if you want to add',
+        ],
+        'transid_source' => [
+            'FriendlyName' => 'Recorded Transaction ID',
+            'Type' => 'dropdown',
+            'Options' => 'tran_id,bank_tran_id',
+            'Default' => 'tran_id',
+            'Description' => 'Which SSLCommerz ID is stored as the WHMCS transaction ID. Refunds work either way, both IDs are kept in the mod_sslcommerz_transactions table.',
         ],
         'sandbox' => [
             'FriendlyName' => 'Sandbox',
@@ -86,13 +94,32 @@ function sslcommerz_refund($params)
 {
     $sslcommerz = new SSLCommerzAPI(['store_id' => $params['store_id'], 'store_password' => $params['store_password'], 'sandbox' => !empty($params['sandbox'])]);
 
+    $record = Storage::find((string) $params['transid']);
+
     try {
-        $response = $sslcommerz->refund($params['transid'], $params['amount']);
+        // The refund API only accepts the bank transaction ID, whatever WHMCS holds.
+        $bankTrxId = sslcommerz_bankTrxId($sslcommerz, $record, (string) $params['transid']);
+
+        $response = $sslcommerz->refund($bankTrxId, $params['amount']);
     } catch (\Exception $e) {
         return [
             'status' => 'error',
             'rawdata' => $e->getMessage(),
         ];
+    }
+
+    if (!$response->success() && !$response->processing()) {
+        return [
+            'status' => 'declined',
+            'rawdata' => $response->toArray(),
+        ];
+    }
+
+    if ($record) {
+        Storage::save($record->tran_id, [
+            'status' => 'refund_' . $response->status(),
+            'refund_ref_id' => $response->refundRefId(),
+        ]);
     }
 
     return [
@@ -103,11 +130,40 @@ function sslcommerz_refund($params)
     ];
 }
 
+/**
+ * Resolve the bank transaction ID a refund needs from whichever ID WHMCS has
+ * recorded against the payment.
+ */
+function sslcommerz_bankTrxId(SSLCommerzAPI $sslcommerz, $record, $transId)
+{
+    if (!empty($record->bank_tran_id)) {
+        return $record->bank_tran_id;
+    }
+
+    $tranId = !empty($record->tran_id) ? $record->tran_id : $transId;
+
+    try {
+        $bankTrxId = $sslcommerz->bankTrxId($tranId);
+    } catch (\Exception $e) {
+        $bankTrxId = null;
+    }
+
+    // Payments taken before the ledger existed already store the bank ID.
+    if (empty($bankTrxId)) {
+        return $transId;
+    }
+
+    Storage::save($tranId, ['bank_tran_id' => $bankTrxId]);
+
+    return $bankTrxId;
+}
+
 function sslcommerz_handleErrors()
 {
     $errors = [
         'lpa' => 'You paid less amount than required.',
         'tau' => 'The transaction already has been used.',
+        'imm' => 'The transaction belongs to another invoice.',
         'irs' => 'Invalid response from the bKash Server.',
         'ucnl' => 'You didn\'t completed the payment process.',
         'cancel' => 'You payment attempt was cancelled.',

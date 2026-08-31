@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../../includes/gatewayfunctions.php';
 require_once __DIR__ . '/../../../includes/invoicefunctions.php';
 
 use WHMCS\Module\Gateway\Sslcommerz\SSLCommerzAPI;
+use WHMCS\Module\Gateway\Sslcommerz\Storage;
 
 class SSLCommerzCheckout
 {
@@ -171,12 +172,45 @@ class SSLCommerzCheckout
         return array_merge($add, $fields);
     }
 
+    private function generateTrxId()
+    {
+        return 'INV' . $this->invoice['invoiceid'] . '-' . uniqid();
+    }
+
+    /**
+     * The identifier WHMCS stores in its transaction id column. Both ids stay
+     * available through the local ledger, so either one can be recorded here.
+     */
+    private function resolveTrxId($response)
+    {
+        if (($this->gatewayParams['transid_source'] ?? 'tran_id') === 'bank_tran_id') {
+            return $response->bankTranId() ?: $response->tranId();
+        }
+
+        return $response->tranId() ?: $response->bankTranId();
+    }
+
+    private function recordTransaction($response)
+    {
+        Storage::save($response->tranId(), [
+            'invoice_id'   => (int) ($response->valueA() ?: $this->invoice['invoiceid']),
+            'val_id'       => $response->valId(),
+            'bank_tran_id' => $response->bankTranId(),
+            'card_type'    => $response->cardType(),
+            'amount'       => $response->amount(),
+            'currency'     => $response->currency(),
+            'status'       => $response->status(),
+        ]);
+    }
+
     public function createPayment()
     {
         $systemUrl   = \WHMCS\Config\Setting::getValue('SystemURL');
         $callbackURL = $systemUrl . '/modules/gateways/callback/' . $this->gatewayModuleName . '.php?id=' . $this->invoice['invoiceid'];
+        $trxId       = $this->generateTrxId();
 
         $fields = [
+            'tran_id'      => $trxId,
             'amount'       => $this->total,
             'invoice_id'   => $this->invoice['invoiceid'],
             'callback_url' => $callbackURL,
@@ -188,6 +222,14 @@ class SSLCommerzCheckout
             'country'      => $this->client['countryname'],
         ];
 
+        // Kept even if the customer never returns, so the attempt stays traceable.
+        Storage::begin([
+            'invoice_id' => $this->invoice['invoiceid'],
+            'tran_id'    => $trxId,
+            'amount'     => $this->total,
+            'currency'   => 'BDT',
+        ]);
+
         return $this->sslcommerz->checkout($fields);
     }
 
@@ -197,14 +239,26 @@ class SSLCommerzCheckout
             $response = $this->sslcommerz->verify($this->request->get('val_id'));
 
             if ($response->success()) {
-                $existing = $this->checkTransaction($response->bankTranId());
+                $this->recordTransaction($response);
 
-                if ($existing['totalresults'] > 0) {
+                if (! empty($response->valueA()) && (int) $response->valueA() !== (int) $this->invoice['invoiceid']) {
                     return [
                         'status'    => 'error',
-                        'message'   => 'The transaction has been already used.',
-                        'errorCode' => 'tau',
+                        'message'   => 'The transaction belongs to another invoice.',
+                        'errorCode' => 'imm',
                     ];
+                }
+
+                foreach (array_filter([$response->tranId(), $response->bankTranId()]) as $trxId) {
+                    $existing = $this->checkTransaction($trxId);
+
+                    if ($existing['totalresults'] > 0) {
+                        return [
+                            'status'    => 'error',
+                            'message'   => 'The transaction has been already used.',
+                            'errorCode' => 'tau',
+                        ];
+                    }
                 }
 
                 if ($response->amount() < $this->total) {
@@ -217,7 +271,7 @@ class SSLCommerzCheckout
 
                 $this->logTransaction($response->toArray());
 
-                $trxAddResult = $this->addTransaction($response->bankTranId());
+                $trxAddResult = $this->addTransaction($this->resolveTrxId($response));
 
                 if ($trxAddResult['result'] === 'success') {
                     return [
